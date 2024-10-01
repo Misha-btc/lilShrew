@@ -48,7 +48,7 @@ export const useAssembler = () => {
         return acc;
       }, {});
 
-      while (x <= 2) {
+      while (x <= 1) {
         console.log(`x`, x)
         let interProccesSpends = []
         let proccesLength = 0
@@ -57,262 +57,268 @@ export const useAssembler = () => {
         if (Object.keys(proccesSpends).length > 0) {
           const multicallParams = Object.values(proccesSpends).map(tx => ['esplora_tx', [tx.txid]]);
         
-        const multicallResult = await fetchOutspendsMulticall(multicallParams);
-        if (multicallResult.result && Array.isArray(multicallResult.result)) {
-          multicallResult.result.forEach((item, index) => {
-            if (item.result) {
-              console.log(`item.result`, item.result)
-              const currentTx = Object.values(proccesSpends)[index];
+          const multicallResult = await fetchOutspendsMulticall(multicallParams);
+          if (multicallResult.result && Array.isArray(multicallResult.result)) {
 
-              let vinVolume = 0;
-              let lastVin = 0;
-              // Здесь мы вычисляем общий объем входов (vinVolume) и значение последнего входа (lastVin)
-              // для текущей транзакции. Мы проходим по всем входам до индекса currentTx.vin включительно.
-              for (let i = 0; i <= currentTx.vin; i++) {
-                vinVolume += item.result.vin[i].prevout.value;
-                 // Суммируем значения всех входов
-                
-                if (i === currentTx.vin) {
-                  lastVin = item.result.vin[i].prevout.value;
-                  break;
+            //В ЭТОТ ЦИКЛ ОБЕРНУТА ВСЯ ЛОГИКА ПОСТРОЕНИЯ СПЕНДОВ. НАМ НУЖНО ОТДЕЛИТЬ ЕГО ОТ ОСТАЛЬНОЙ ЛОГИКИ
+            for (const [index, item] of multicallResult.result.entries()) {
+              if (item.result) {
+                console.log(`item.result`, item.result)
+                const currentUTXO = Object.values(proccesSpends)[index];
+                console.log(`currentUTXO`, currentUTXO)
+
+                let vinVolume = 0;
+                let lastVin = 0;
+                // Здесь мы вычисляем общий объем входов (vinVolume) и значение последнего входа (lastVin)
+                // для текущей транзакции. Мы проходим по всем входам до индекса currentTx.vin включительно.
+                for (let i = 0; i <= currentUTXO.vin; i++) {
+                  vinVolume += item.result.vin[i].prevout.value;
+                  // Суммируем значения всех входов
+                  
+                  if (i === currentUTXO.vin) {
+                    lastVin = item.result.vin[i].prevout.value;
+                    break;
+                  }
                 }
-              }
 
-              // Удаляем обработанный элемент из proccesSpends
-              proccesLength = Object.keys(proccesSpends).length
-              let voutVolume = 0
-              let startVout = 0
-              let startOffset = 0
-              let endVout = 0
-              let endOffset = 0
+                // Удаляем обработанный элемент из proccesSpends
+                proccesLength = Object.keys(proccesSpends).length
+                let voutVolume = 0
+                let startVout = 0
+                let startOffset = 0
+                let endVout = 0
+                let endOffset = 0
 
-              let spentAsFee = false
+                let spentAsFee = false
 
-              let proccesStartOffset = proccesSpends[index].startOffset
-              let proccesEndOffset = proccesSpends[index].endOffset
+                let proccesStartOffset = proccesSpends[index].startOffset
+                let proccesEndOffset = proccesSpends[index].endOffset
 
-              let volumeBeforeTarget = vinVolume - lastVin
+                let volumeBeforeTarget = vinVolume - lastVin
 
-              let volumePlusOffset = volumeBeforeTarget + proccesStartOffset
+                let volumePlusOffset = volumeBeforeTarget + proccesStartOffset
 
-              let currentVout = 0
-              let voutLength = item.result.vout.length
+                let currentVout = 0
+                let voutLength = item.result.vout.length
 
-              // Здесь мы определяем начальный и конечный индексы выходов (vout) для текущей транзакции
-              
-              // Определяем startVout - индекс, с которого начинаем учитывать выходы
-              if (volumeBeforeTarget === 0) {
-                startVout = 0
-              } else {
-                // Ищем индекс, где сумма выходов превышает или равна volumeBeforeTarget
-                for (let j = 0; j < voutLength || voutVolume <= volumePlusOffset; j++) {
+                // Здесь мы определяем начальный и конечный индексы выходов (vout) для текущей транзакции
+                
+                // Определяем startVout - индекс, с которого начинаем учитывать выходы
+                if (volumeBeforeTarget === 0) {
+                  startVout = 0
+                } else {
+                  // Ищем индекс, где сумма выходов превышает или равна volumeBeforeTarget
+                  for (let j = 0; j < voutLength || voutVolume <= volumePlusOffset; j++) {
 
-                  currentVout = item.result.vout[j].value
-                  voutVolume += currentVout
+                    currentVout = item.result.vout[j].value
+                    voutVolume += currentVout
 
-                  // Если ЦЕЛЕВЫЕ САТЫ ПОТРАЧЕНЫ в качестве комиссии 
-                  if (j === voutLength - 1) {
-                    if (voutVolume <= volumePlusOffset) {
-                      spentAsFee = true
-                      console.log(`ВСЕ ЦЕЛЕВЫЕ САТЫ ПОТРАЧЕНЫ в качестве комиссии`)
-                    } else if (voutVolume > volumePlusOffset) {
-                      startVout = j
-                      startOffset = Math.abs(voutVolume - volumePlusOffset - currentVout)
-                      console.log(`ВОЗМОЖНО ЦЕЛЕВЫЕ САТЫ ПОТРАЧЕНЫ в качестве комиссии`)
-                    }
-                    break
-                  } else {
-                    if (voutVolume === volumePlusOffset) {
-                      startVout = j + 1
-                      startOffset = 0
-                      break
-                    } else if (voutVolume > volumePlusOffset) {
-                      startVout = j
-                      if (j > 0) {
+                    // Если ЦЕЛЕВЫЕ САТЫ ПОТРАЧЕНЫ в качестве комиссии 
+                    if (j === voutLength - 1) {
+                      if (voutVolume <= volumePlusOffset) {
+                        spentAsFee = true
+                        console.log(`ВСЕ ЦЕЛЕВЫЕ САТЫ ПОТРАЧЕНЫ в качестве комиссии`)
+                      } else if (voutVolume > volumePlusOffset) {
+                        startVout = j
                         startOffset = Math.abs(voutVolume - volumePlusOffset - currentVout)
-                        break
-                      } else if (j === 0){
-                        startOffset = volumePlusOffset
-                        break
+                        console.log(`ВОЗМОЖНО ЦЕЛЕВЫЕ САТЫ ПОТРАЧЕНЫ в качестве комиссии`)
                       }
                       break
+                    } else {
+                      if (voutVolume === volumePlusOffset) {
+                        startVout = j + 1
+                        startOffset = 0
+                        break
+                      } else if (voutVolume > volumePlusOffset) {
+                        startVout = j
+                        if (j > 0) {
+                          startOffset = Math.abs(voutVolume - volumePlusOffset - currentVout)
+                          break
+                        } else if (j === 0){
+                          startOffset = volumePlusOffset
+                          break
+                        }
+                        break
+                      }
                     }
                   }
                 }
-              }
 
-              if (startOffset === 0 && !spentAsFee) {
-                // Если размер стартового выхода равен последнему входу, то конечный выход - это стартовый выход
-                if (item.result.vout[startVout].value === lastVin) {
-                  endOffset = 0 + proccesEndOffset
-                  endVout = startVout;
-                } else {
-                  // Ищем конечный выход, суммируя значения выходов, начиная с startVout
-                  let accumulatedValue = 0;
+                if (startOffset === 0 && !spentAsFee) {
+                  // Если размер стартового выхода равен последнему входу, то конечный выход - это стартовый выход
+                  if (item.result.vout[startVout].value === lastVin) {
+                    endOffset = 0 + proccesEndOffset
+                    endVout = startVout;
+                  } else {
+                    // Ищем конечный выход, суммируя значения выходов, начиная с startVout
+                    let accumulatedValue = 0;
+
+                    for (let j = startVout; j < item.result.vout.length; j++) {
+                      accumulatedValue += item.result.vout[j].value;
+
+                      if (accumulatedValue - startOffset === lastVin) {
+                        endVout = j;
+                        endOffset = 0 + proccesEndOffset
+                        break;
+                      } else if (accumulatedValue - startOffset > lastVin) {
+                        endVout = j;
+                        endOffset = accumulatedValue - lastVin + proccesEndOffset
+                        break;
+                        // Если последний выход
+                      } else if (j === item.result.vout.length - 1) {
+                        if (accumulatedValue < (lastVin - proccesEndOffset)) {
+                          spentAsFee = true
+                          break
+                          endVout = item.result.vout.length - 1;
+                        }
+                      } else if (item.result.vout[j].value === 0) {
+                        continue
+                      } else {
+                        /*                       console.log(`НЕПОЛНОЕ СЛОВИЕ`)
+                                              console.log(`j`, j)
+                                              console.log(`item.result.vout[j].value`, item.result.vout[j].value)
+                                              console.log(`item.result`, item.result)
+                                              console.log(`accumulatedValue`, accumulatedValue)
+                                              console.log(`lastVin`, lastVin)
+                                              console.log(`proccesEndOffset`, proccesEndOffset)
+                                              console.log(`startOffset`, startOffset)
+                                              console.log(`startVout`, startVout)
+                                              console.log(`endVout`, endVout)
+                                              console.log(`volumeBeforeTarget`, volumeBeforeTarget)
+                                              console.log(`volumePlusOffset`, volumePlusOffset)
+                                              console.log(`НЕПОЛНОЕ УСЛОВИЕ`)
+                        */
+                        break
+                      }
+                    }
+                  }
+                } else if (startOffset > 0 && !spentAsFee) {
+
+                  let accumulatedValue = 0
 
                   for (let j = startVout; j < item.result.vout.length; j++) {
                     accumulatedValue += item.result.vout[j].value;
 
-                    if (accumulatedValue - startOffset === lastVin) {
+                    if (accumulatedValue === lastVin ) {
                       endVout = j;
-                      endOffset = 0 + proccesEndOffset
+                      endOffset = 0
                       break;
                     } else if (accumulatedValue - startOffset > lastVin) {
                       endVout = j;
-                      endOffset = accumulatedValue - lastVin + proccesEndOffset
+                      endOffset = accumulatedValue - startOffset - lastVin
                       break;
-                      // Если последний выход
-                    } else if (j === item.result.vout.length - 1) {
-                      if (accumulatedValue < (lastVin - proccesEndOffset)) {
-                        spentAsFee = true
-                        break
-                        endVout = item.result.vout.length - 1;
-                      }
-                    } else if (item.result.vout[j].value === 0) {
-                      continue
-                    } else {
-                      console.log(`НЕПОЛНОЕ УСЛОВИЕ`)
-                      console.log(`j`, j)
-                      console.log(`item.result.vout[j].value`, item.result.vout[j].value)
-                      console.log(`item.result`, item.result)
-                      console.log(`accumulatedValue`, accumulatedValue)
-                      console.log(`lastVin`, lastVin)
-                      console.log(`proccesEndOffset`, proccesEndOffset)
-                      console.log(`startOffset`, startOffset)
-                      console.log(`startVout`, startVout)
-                      console.log(`endVout`, endVout)
-                      console.log(`volumeBeforeTarget`, volumeBeforeTarget)
-                      console.log(`volumePlusOffset`, volumePlusOffset)
-                      console.log(`НЕПОЛНОЕ УСЛОВИЕ`)
-
-                      break
                     }
                   }
-                }
-              } else if (startOffset > 0 && !spentAsFee) {
-
-                let accumulatedValue = 0
-
-                for (let j = startVout; j < item.result.vout.length; j++) {
-                  accumulatedValue += item.result.vout[j].value;
-
-                  if (accumulatedValue === lastVin ) {
-                    endVout = j;
-                    endOffset = 0
-                    break;
-                  } else if (accumulatedValue - startOffset > lastVin) {
-                    endVout = j;
-                    endOffset = accumulatedValue - startOffset - lastVin
-                    break;
-                  }
-                }
-              } 
-              let newSpends = [];
-              if (startVout === endVout) {
-                newSpends.push({
-                  txid: item.result.txid,
-                  vin: currentTx.vin,
-                  vout: startVout,
-                  value: lastVin,
-                  startOffset: startOffset,
-                  endOffset: endOffset
-                });
-              } else {
-                for (let i = startVout; i <= endVout; i++) {
-                  let spend = {
+                } 
+                let newSpends = [];
+                if (startVout === endVout) {
+                  newSpends.push({
                     txid: item.result.txid,
-                    vin: currentTx.vin,
-                    vout: i,
-                    value: item.result.vout[i].value,
-                    startOffset: i === startVout ? startOffset : 0,
-                    endOffset: i === endVout ? endOffset : 0
-                  };
-                  newSpends.push(spend);
+                    vin: currentUTXO.vin,
+                    vout: startVout,
+                    value: lastVin,
+                    startOffset: startOffset,
+                    endOffset: endOffset
+                  });
+                } else {
+                  for (let i = startVout; i <= endVout; i++) {
+                    let spend = {
+                      txid: item.result.txid,
+                      vin: currentUTXO.vin,
+                      vout: i,
+                      value: item.result.vout[i].value,
+                      startOffset: i === startVout ? startOffset : 0,
+                      endOffset: i === endVout ? endOffset : 0
+                    };
+                    newSpends.push(spend);
+                  }
                 }
-              }
-              
+                
 
-              if (!Array.isArray(interProccesSpends)) {
-                interProccesSpends = [];
-              }
-              
-              interProccesSpends.push(...newSpends);
+                if (!Array.isArray(interProccesSpends)) {
+                  interProccesSpends = [];
+                }
+                
+                interProccesSpends.push(...newSpends);
 
-              const multicallParams = interProccesSpends.map(spend => ['esplora_tx::outspend', [spend.txid, spend.vout]]);
-              console.log(`multicallParams`, multicallParams)
-              console.log(`multicallParams.length === Object.keys(proccesSpends).length`, multicallParams.length === Object.keys(proccesSpends).length)
-              console.log(`Object.keys(proccesSpends).length`, Object.keys(proccesSpends).length)
-              if (multicallParams.length === Object.keys(proccesSpends).length) {
-                fetchOutspendsMulticall(multicallParams).then(multicallResult => {
-                  console.log(`multicallResult`, multicallResult)
+                const multicallParams = interProccesSpends.map(spend => ['esplora_tx::outspend', [spend.txid, spend.vout]]);
 
+                // Изменим условие, чтобы запрос выполнялся, если есть хотя бы один параметр
+                console.log(`multicallParams length`, multicallParams.length)
+                console.log(`multicallParams`, multicallParams)
+                console.log(`multicallParams.length > 0`, multicallParams.length > 0)
+                if (multicallParams.length > 0) {
+                  try {
+                    console.log(`Начало выполнения fetchOutspendsMulticall`);
+                    
+                    const multicallResult = await fetchOutspendsMulticall(multicallParams);
+                    
+                    console.log(`fetchOutspendsMulticall выполнен успешно`);
+                    
+                    if (!multicallResult || typeof multicallResult !== 'object') {
+                      console.error('Неожиданный формат результата fetchOutspendsMulticall:', multicallResult);
+                      return;
+                    }
+                    
+                    if (Array.isArray(multicallResult.result)) {
+                      for (const [index, item] of multicallResult.result.entries()) {
+                        if (item.result) {
+                          if (item.result.spent === true) {
+                            proccesSpends[index] = {
+                              ...interProccesSpends[index],
+                              ...item.result[interProccesSpends[index].vout],
+                              index: index,
+                              vin: item.result.vin,
+                              txid: item.result.txid,
+                              spent: true,
+                              ddd: `spent`
+                            };
+                            console.log(`if (item.result.spent === true`);
+                          } else if (item.result.spent === false) {
+                            receivedUnspends[index] = {
+                              ...interProccesSpends[index],
+                              index: index,
+                              spent: false,
+                              ddd: `received`
 
-
-
-                  // Определяем тип multicallResult
-                  if (Array.isArray(multicallResult.result)) {
-                    console.log('multicallResult - это массив результатов');
-                  } else if (typeof multicallResult.result === 'object' && multicallResult.result !== null) {
-                    console.log('multicallResult - это объект');
-                  } else {
-                    console.log('Неожиданный тип multicallResult:', typeof multicallResult.result);
-                  }
-
-
-
-                  if (Array.isArray(multicallResult.result)) {
-                    multicallResult.result.forEach((item, index) => {
-                      if (item.result) {
-                        console.log(`item.resultEND`, item.result)
-                        if (item.result.spent === true) {
-                          proccesSpends[index] = {
-                            ...interProccesSpends[index],
-                            ...item.result[interProccesSpends[index].vout],
-                            index: index,
-                            vin: item.result.vin,
-                            txid: item.result.txid,
-                            spent: true,
-                            ddd: `spent`
-                          };
-                          
-                        } else if (item.result.spent === false) {
-                          receivedUnspends[index] = {
-                            ...interProccesSpends[index],
-                            index: index,
-                            spent: false,
-                            ddd: `received`
-
-                          };
+                            };
+                            console.log(`if (item.result.spent === false`);
+                          }
+                        console.log(`proccesSpends`,proccesSpends)
+                        } else if (item.error) {
+                          console.error(`Ошибка для txid ${interProccesSpends[index].txid}:`, item.error);
                         }
-                      
-                      } else if (item.error) {
-                        console.error(`Ошибка для txid ${interProccesSpends[index].txid}:`, item.error);
                       }
-                    });
-                  } else {
-                    console.error('Неожиданный формат результата multicall:', multicallResult);
+                    } else {
+                      console.error('Неожиданный формат результата multicall:', multicallResult);
+                    }
+                  } catch (error) {
+                    console.error('Ошибка при выполнении fetchOutspendsMulticall:', error);
+                    console.error('Стек ошибки:', error.stack);
+                  } finally {
+                    console.log(`Завершение выполнения fetchOutspendsMulticall`);
                   }
-                }).catch(error => {
-                  console.error('Ошибка при выполнении multicall:', error);
-                });
+                } else {
+                  console.log('Нет параметров для выполнения multicall');
+                }
+              } else if (item.error) {
+                console.error(`Error for txid ${proccesSpends[index].txid}:`, item.error);
               }
-            } else if (item.error) {
-              console.error(`Error for txid ${proccesSpends[index].txid}:`, item.error);
             }
-          });
-        // Удаляем первый и второй элемент из proccesSpends
+                      // Удаляем первый и второй элемент из proccesSpends
+                    /*    console.log(`proccesSpends`, JSON.stringify(proccesSpends))
+                      let afterLength = Object.keys(proccesSpends).length - proccesLength;
+                      console.log(`afterLength`, afterLength)
+                      if (afterLength > 0) {
+                        const keys = Object.keys(proccesSpends);
+                        for (let i = afterLength - 1; i >= 0; i--) {
+                          delete proccesSpends[keys[i]];
+                        }
+                      } */
 
-        let afterLength = Object.keys(proccesSpends).length - proccesLength;
-        if (afterLength > 0) {
-          const keys = Object.keys(proccesSpends);
-          for (let i = afterLength - 1; i >= 0; i--) {
-            delete proccesSpends[keys[i]];
-          }
-        }
-
-        } else {
-            console.error('Unexpected multicall result format:', multicallResult);
-          }
+          } else {
+              console.error('Unexpected multicall result format:', multicallResult);
+            }
         }
         x++
       }
