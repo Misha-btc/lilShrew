@@ -13,8 +13,13 @@ export const useAssembler = () => {
   const [MulticallData, setMulticallData] = useState(null);
 
   const fetchAssembler = useCallback(async (outputId) => {
+
+    //ОБНОВИТЬ В КОНЦЕ ОБРАБОТКИ
     let unspentOutputs = {};
     let spentOutputs = {};
+
+
+
     let receivedUnspends = {};
     let feeSpent = {}
 
@@ -48,24 +53,26 @@ export const useAssembler = () => {
         return acc;
       }, {});
 
-      while (x <= 1) {
+      console.log(`ACCCproccesSpends`, JSON.stringify(proccesSpends))
+
+      while (x <= 2) {
         console.log(`x`, x)
+        console.log(`proccesSpendsSTART`,JSON.stringify(proccesSpends))
         let interProccesSpends = []
         let proccesLength = 0
-        
-        console.log(`proccesSpends`, JSON.stringify(proccesSpends))
+
         if (Object.keys(proccesSpends).length > 0) {
           const multicallParams = Object.values(proccesSpends).map(tx => ['esplora_tx', [tx.txid]]);
         
           const multicallResult = await fetchOutspendsMulticall(multicallParams);
           if (multicallResult.result && Array.isArray(multicallResult.result)) {
+            console.log(`multicallResult`, multicallResult)
 
             //В ЭТОТ ЦИКЛ ОБЕРНУТА ВСЯ ЛОГИКА ПОСТРОЕНИЯ СПЕНДОВ. НАМ НУЖНО ОТДЕЛИТЬ ЕГО ОТ ОСТАЛЬНОЙ ЛОГИКИ
             for (const [index, item] of multicallResult.result.entries()) {
               if (item.result) {
-                console.log(`item.result`, item.result)
                 const currentUTXO = Object.values(proccesSpends)[index];
-                console.log(`currentUTXO`, currentUTXO)
+                console.log(`currentUTXO`, JSON.stringify(currentUTXO))
 
                 let vinVolume = 0;
                 let lastVin = 0;
@@ -80,9 +87,10 @@ export const useAssembler = () => {
                     break;
                   }
                 }
+                console.log(`currentUTXO.vin`, currentUTXO.vin)
+                console.log(`vinVolume`, vinVolume)
+                console.log(`lastVin`, lastVin)
 
-                // Удаляем обработанный элемент из proccesSpends
-                proccesLength = Object.keys(proccesSpends).length
                 let voutVolume = 0
                 let startVout = 0
                 let startOffset = 0
@@ -104,6 +112,9 @@ export const useAssembler = () => {
                 // Здесь мы определяем начальный и конечный индексы выходов (vout) для текущей транзакции
                 
                 // Определяем startVout - индекс, с которого начинаем учитывать выходы
+                console.log(`volumeBeforeTarget`, volumeBeforeTarget)
+                console.log(`vinVolume`, vinVolume)
+                console.log(`lastVin`, lastVin)
                 if (volumeBeforeTarget === 0) {
                   startVout = 0
                 } else {
@@ -169,7 +180,6 @@ export const useAssembler = () => {
                         if (accumulatedValue < (lastVin - proccesEndOffset)) {
                           spentAsFee = true
                           break
-                          endVout = item.result.vout.length - 1;
                         }
                       } else if (item.result.vout[j].value === 0) {
                         continue
@@ -218,7 +228,8 @@ export const useAssembler = () => {
                     vout: startVout,
                     value: lastVin,
                     startOffset: startOffset,
-                    endOffset: endOffset
+                    endOffset: endOffset,
+
                   });
                 } else {
                   for (let i = startVout; i <= endVout; i++) {
@@ -227,8 +238,8 @@ export const useAssembler = () => {
                       vin: currentUTXO.vin,
                       vout: i,
                       value: item.result.vout[i].value,
-                      startOffset: i === startVout ? startOffset : 0,
-                      endOffset: i === endVout ? endOffset : 0
+                      startOffset: startOffset,
+                      endOffset: endOffset,
                     };
                     newSpends.push(spend);
                   }
@@ -244,26 +255,19 @@ export const useAssembler = () => {
                 const multicallParams = interProccesSpends.map(spend => ['esplora_tx::outspend', [spend.txid, spend.vout]]);
 
                 // Изменим условие, чтобы запрос выполнялся, если есть хотя бы один параметр
-                console.log(`multicallParams length`, multicallParams.length)
-                console.log(`multicallParams`, multicallParams)
-                console.log(`multicallParams.length > 0`, multicallParams.length > 0)
                 if (multicallParams.length > 0) {
                   try {
-                    console.log(`Начало выполнения fetchOutspendsMulticall`);
                     
                     const multicallResult = await fetchOutspendsMulticall(multicallParams);
+                    console.log(`multicallResult`, multicallResult)
                     
-                    console.log(`fetchOutspendsMulticall выполнен успешно`);
-                    
-                    if (!multicallResult || typeof multicallResult !== 'object') {
-                      console.error('Неожиданный формат результата fetchOutspendsMulticall:', multicallResult);
-                      return;
-                    }
-                    
+                    console.log(index,`proccesSpendsBEFORE`,JSON.stringify(proccesSpends[index]))
                     if (Array.isArray(multicallResult.result)) {
                       for (const [index, item] of multicallResult.result.entries()) {
-                        if (item.result) {
+
+                        if (item.result && !spentAsFee) {
                           if (item.result.spent === true) {
+                            console.log(`INDEX`, index)
                             proccesSpends[index] = {
                               ...interProccesSpends[index],
                               ...item.result[interProccesSpends[index].vout],
@@ -271,21 +275,31 @@ export const useAssembler = () => {
                               vin: item.result.vin,
                               txid: item.result.txid,
                               spent: true,
-                              ddd: `spent`
+                              level: x,
                             };
-                            console.log(`if (item.result.spent === true`);
                           } else if (item.result.spent === false) {
                             receivedUnspends[index] = {
                               ...interProccesSpends[index],
                               index: index,
                               spent: false,
-                              ddd: `received`
-
+                              level: x,
                             };
-                            console.log(`if (item.result.spent === false`);
+                            delete proccesSpends[index];
                           }
-                        console.log(`proccesSpends`,proccesSpends)
-                        } else if (item.error) {
+                        console.log(index,`proccesSpendsEND`,JSON.stringify(proccesSpends[index]))
+                        } else if (spentAsFee && item.result){
+                          feeSpent[index] = {
+                            ...interProccesSpends[index],
+                            ...item.result[interProccesSpends[index].vout],
+                            index: index,
+                            vin: item.result.vin,
+                            txid: item.result.txid,
+                            spent: true,
+                            level: x,
+                          }
+                          console.log(`feeSpent`, JSON.stringify(proccesSpends[index]))
+                        }
+                          else if (item.error) {
                           console.error(`Ошибка для txid ${interProccesSpends[index].txid}:`, item.error);
                         }
                       }
@@ -322,6 +336,11 @@ export const useAssembler = () => {
         }
         x++
       }
+      console.log(`unspentOutputs`, unspentOutputs)
+      console.log(`proccesSpends`, JSON.stringify(proccesSpends))
+      console.log(`spentOutputs`, spentOutputs)
+      console.log(`receivedUnspends`, receivedUnspends)
+      console.log(`feeSpent`, feeSpent)
     } catch (error) {
       console.error('Error in fetchAssembler:', error);
     }
