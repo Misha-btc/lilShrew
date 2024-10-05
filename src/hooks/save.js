@@ -15,7 +15,7 @@ export const useAssembler = () => {
 
     try {
       let currentTxid = txid;
-      let x = 0;
+      let x = 1;
 
    
       let spentOutputs = [];
@@ -25,7 +25,7 @@ export const useAssembler = () => {
       const txOutspends = await fetchOutspends([currentTxid]);
       console.log(txOutspends);
 
-      // Обрабатываем txOutspends как объект и добавляем в массивы unspentOutputs или spentOutputs
+      // Обрабатываем txOutspends и добавляем в массивы unspentOutputs или spentOutputs
       txOutspends.result.forEach((output, index) => {
         if (!output.spent) {
           totalUnspentOutputs.push({ ...output, index, level: 0 });
@@ -34,7 +34,7 @@ export const useAssembler = () => {
         }
       });
 
-      while (x <= 2) {
+      while (x <= 4) {
         console.log(`xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`)
         console.log(x)
         
@@ -42,8 +42,12 @@ export const useAssembler = () => {
         
         let spentOutputsList = [];
 
-        console.log(`spentOutputsSTART`)
-        console.log(JSON.stringify(spentOutputs))
+        if (x ===3) {
+          console.log(`spentOutputsSTART`)
+          console.log(JSON.stringify(spentOutputs))
+        }
+
+        
         
         // Глубина сат ренжа
         let level = x;
@@ -67,24 +71,30 @@ export const useAssembler = () => {
           spentOutputsTx.push({...tx, index: spentOutputs[i].index, level: level});
         }
 
-        // Сумма вплоть до входа + оффсет
 
-         // Обновим spentOutputs значением потраченного входа, и суммой вплоть до потраченного входа
+         // Обновим spentOutputs значениями из новой транзакции
         for (let i = 0; i < spentOutputsTx.length; i++) {
-          // Сумма потраченных входов включая потраченый вход
+          // Сумма потраченных входов включая целевой UTXO и оффсеты
           let vinSumUpTo = 0;
           for (let j = 0; j < spentOutputsTx[i].vin.length; j++) {
             const tx = spentOutputsTx[i];
             vinSumUpTo += tx.vin[j].prevout.value;
             if (j === spentOutputs[i].vin) {
+
               // Значение потраченного входа
               let startOffset = spentOutputs[i].startOffset ? spentOutputs[i].startOffset : 0;
-              // Сумма Значений потраченных входов с учетом оффсета до начала потраченного сатов
+              // Значение целевых сатов
+              let value = spentOutputs[i].value ? spentOutputs[i].value : tx.vin[j].prevout.value;
+              // Сумма Значений потраченных входов с учетом стартового оффсета до начала потраченного сатов
               let vinSumBeforeTarget = vinSumUpTo - tx.vin[j].prevout.value + startOffset;
-              let vinTargetValue = spentOutputs[i].vinTargetValue ? spentOutputs[i].vinTargetValue : tx.vin[j].prevout.value;
+              // Целевое значение потраченного входа
+              let vinTargetValue = tx.vin[j].prevout.value;
+              
+             
               spentOutputs[i] = { 
                 ...spentOutputs[i],
                 vinTargetValue: vinTargetValue,
+                value: value,
                 vinSumUpTo: vinSumUpTo,
                 vinSumBeforeTarget: vinSumBeforeTarget
               }
@@ -94,106 +104,116 @@ export const useAssembler = () => {
           }
         }
 
+        // vinTargetValue - целевое значение потраченного входа включая оффсеты.
+        // vinSumBeforeTarget - сумма значений потраченных входов с учетом СтартОффсета до начала потраченного входа
+        // vinSumUpTo - сумма значений потраченных входов включая потраченый вход и оффсеты
+        // startOffset - значение предшествующее целевым сатам в потраченном входе
+        // startVout - первый индекс выхода содержащего целевые саты
+        // endOffset - значение после целевых сатов в потраченном входе
+        // endVout - последний индекс выхода содержащего целевые саты
+        // vinVoutDiff - разница между целевым значением потраченного входа и суммой значений выходов в потраченном входе
+        // value - отслеживаемое значение целевых сатов
+        
 
-        
-        
          // Найдем в каком новом выходе начинается потраченный вход (индекс выхода, и оффсет)
-
+         // ПЕРЕБОР ЗНАЧЕНИЙ ВЫХОДОВ
+         //////////////////////////////////////////////////////////////
         for (let i = 0; i < spentOutputsTx.length; i++) {
-          spentOutputs[i].startOffset = spentOutputs[i].startOffset ? spentOutputs[i].startOffset : 0;
+          let startOffset = spentOutputs[i].startOffset ? spentOutputs[i].startOffset : 0;
           let voutSum = 0;
           for (let j = 0; j < spentOutputsTx[i].vout.length; j++) {
             const tx = spentOutputsTx[i];
             voutSum += tx.vout[j].value;
-            
-            
-              // если целевой выход первый
-            if (spentOutputs[i].vinSumBeforeTarget === 0) {
-              if (spentOutputs[i].startOffset === 0) {
-                spentOutputs[i].startOffset = 0;
-              } else if (voutSum < spentOutputs[i].startOffset) {
-                continue;
-              }
-              spentOutputs[i].startVout = j;
-              break; 
 
-              // Условие должно включать обработку полной траты в качестве комиссии
-            } else if (voutSum < spentOutputs[i].vinSumBeforeTarget + spentOutputs[i].startOffset){
-              if (j !== spentOutputsTx[i].vout.length - 1) {
-                continue;
-                // ПОЧЕМУ СРАБАТЫВАЕТСЯ ЭТО УСЛОВИЕ?
-              } else {
-                // Добавляем в массив totalFeeOutputs и удаляем из spentOutputs и spentOutputsTx
-                totalFeeOutputs.push({...spentOutputs[i]});
-                spentOutputs = spentOutputs.slice(0, i).concat(spentOutputs.slice(i + 1));
-                spentOutputsTx = spentOutputsTx.slice(0, i).concat(spentOutputsTx.slice(i + 1));
-                
-                break;
-              }
-
-            
-              
-
-            } else if (voutSum >= spentOutputs[i].vinSumBeforeTarget + spentOutputs[i].startOffset) {
-              let startOffset = Math.abs(voutSum - spentOutputs[i].startOffset - spentOutputs[i].vinSumBeforeTarget - tx.vout[j].value);
-              spentOutputs[i] = {
+              // 
+              if (voutSum >= spentOutputs[i].vinSumBeforeTarget) {
+                startOffset = Math.abs(voutSum - spentOutputs[i].vinSumBeforeTarget - tx.vout[j].value);
+                spentOutputs[i] = {
                 ...spentOutputs[i],
                 startOffset: startOffset,
                 startVout: j
               }
               break;
-            }
-          }
-        }
 
-        console.log(`spentOutputs Найдем в каком новом выходе начинается потраченный вход (индекс выхода, и оффсет)`)
-        console.log(JSON.stringify(spentOutputs))
 
-        // Найдем в каком новом выходе заканчивается потраченный вход (индекс выхода, и оффсет)
-        for (let i = 0; i < spentOutputsTx.length; i++) {
-          spentOutputs[i].endOffset = spentOutputs[i].endOffset ? spentOutputs[i].endOffset : 0;
-          let voutSum = 0;
-          for (let j = spentOutputs[i].startVout; j < spentOutputsTx[i].vout.length; j++) {
-            const tx = spentOutputsTx[i];
-            voutSum += tx.vout[j].value;
-            // 
-            if (voutSum - spentOutputs[i].startOffset < spentOutputs[i].vinTargetValue - spentOutputs[i].endOffset) {
+            } else if (voutSum < spentOutputs[i].vinSumBeforeTarget){
               if (j !== spentOutputsTx[i].vout.length - 1) {
                 continue;
               } else {
-                // Часть выхода потрачена в качестве комиссии
-                let vinTargetValue = spentOutputs[i].vinTargetValue - (voutSum - spentOutputs[i].startOffset);
-                let endOffset = 0;
-                spentOutputs[i] = {
-                  ...spentOutputs[i],
-                  endOffset: endOffset,
-                  endVout: j,
-                  vinTargetValue: vinTargetValue
-                }
+                // В этом условии все наши целевые саты потрачены в качестве комиссии
+                // Добавляем в массив totalFeeOutputs и удаляем из spentOutputs и spentOutputsTx
                 totalFeeOutputs.push({...spentOutputs[i]});
+                spentOutputs = spentOutputs.slice(0, i).concat(spentOutputs.slice(i + 1));
+                spentOutputsTx = spentOutputsTx.slice(0, i).concat(spentOutputsTx.slice(i + 1));
                 break;
               }
-            } else if (voutSum - spentOutputs[i].startOffset >= spentOutputs[i].vinTargetValue - spentOutputs[i].endOffset) {
-              let endOffset = voutSum - spentOutputs[i].startOffset - spentOutputs[i].vinTargetValue;
-              spentOutputs[i] = {
-                ...spentOutputs[i],
-                endOffset: spentOutputs[i].endOffset + endOffset,
-                endVout: j
-              }
-              break;
+
+
+
             }
           }
         }
 
-        console.log(`spentOutputs Найдем в каком новом выходе заканчивается потраченный вход (индекс выхода, и оффсет)`)
-        console.log(JSON.stringify(spentOutputs))
-        console.log(spentOutputs)
 
-        console.log(`spentOutputs.length`)
-        console.log(spentOutputs.length)
+        // Найдем в каком новом выходе заканчивается потраченный вход (индекс выхода, и оффсет)
+        for (let i = 0; i < spentOutputsTx.length; i++) {
+          let endOffset = spentOutputs[i].endOffset ? spentOutputs[i].endOffset : 0; 
+          let voutSum = 0;
+          let voutTargetValue = spentOutputs[i].startOffset + spentOutputs[i].value;
+          
+          for (let j = spentOutputs[i].startVout; j < spentOutputsTx[i].vout.length; j++) {
+            const tx = spentOutputsTx[i];
+            voutSum += tx.vout[j].value;
+           
+            // В этом случае целевые саты и стартоффсет НЕ потрачены в качестве комиссии, енофссет возможно
+            if (voutSum >= voutTargetValue) { 
+              endOffset = Math.abs(voutSum - voutTargetValue);
+              spentOutputs[i] = {
+                ...spentOutputs[i],
+                endOffset: endOffset,
+                endVout: j
+              }
+              break;
+            } else {
+              // Не последний выход
+              if (j !== spentOutputsTx[i].vout.length - 1) {
+                continue;
+              } else {
+                // Last output voutSum меньше целевого значения + оффсет
+                if (voutSum >= spentOutputs[i].vinTargetValue - spentOutputs[i].endOffset) {
+                  // потрачены не целевые саты. Посчитать сколько осталось оффсета
+                  // Возможно ошибка так как офсета может не быть
+                  endOffset = Math.abs(voutSum - spentOutputs[i].vinTargetValue - spentOutputs[i].startOffset);
+                  spentOutputs[i] = {
+                    ...spentOutputs[i],
+                    endOffset: endOffset,
+                    endVout: j,
+                  }
+                  break;
 
-        console.log(`spentOutputs.length`)
-        console.log(spentOutputs)
+                } else {
+                  // целевые саты потрачены в качестве комиссии
+                  let vinTargetValue = spentOutputs[i].vinTargetValue - (voutSum - spentOutputs[i].startOffset);
+                  let value = voutSum - spentOutputs[i].vinTargetValue - spentOutputs[i].startOffset;
+                  endOffset = 0;
+                  spentOutputs[i] = {
+                    ...spentOutputs[i],
+                    endOffset: endOffset,
+                    endVout: j,
+                    value: value
+                  }
+                  totalFeeOutputs.push({...spentOutputs[i]});
+                  spentOutputs = spentOutputs.slice(0, i).concat(spentOutputs.slice(i + 1));
+                  spentOutputsTx = spentOutputsTx.slice(0, i).concat(spentOutputsTx.slice(i + 1));
+                  break;
+                }
+                // Часть выхода потрачена в качестве комисси
+                
+              }
+            } 
+          }
+        }
+
 
 
         for (let i = 0; i < spentOutputs.length; i++) {
@@ -213,14 +233,15 @@ export const useAssembler = () => {
             }
           }
         }
-        console.log(`spentOutputsList`)
-        console.log(JSON.stringify(spentOutputsList))
+
         const multicallOutParams = spentOutputsList.map(id => ['esplora_tx::outspend', [id.txid, id.vout]]);
         const multicallOutResult = await fetchOutspendsMulticall(multicallOutParams);
-        console.log(`multicallOutResult`)
-        console.log(JSON.stringify(multicallOutResult))
 
-        
+
+        if (x ===3) {
+          console.log(`multicallOutResult`)
+          console.log(JSON.stringify(multicallOutResult))
+        }
 
 
         // Перепакуем spentOutputs, очистив его, и добавив spentOutputsList с соответствубщим ответом мультикола
@@ -244,16 +265,13 @@ export const useAssembler = () => {
         spentOutputsTx.length = 0;
         spentOutputsList.length = 0;
 
-        console.log(`spentOutputsList`)
-        console.log(spentOutputsList)
-        console.log(`spentOutputs`)
-        console.log(spentOutputs)
-        console.log(`spentOutputsTx`)
-        console.log(spentOutputsTx)
-        console.log(`totalFeeOutputs`)
-        console.log(totalFeeOutputs)
-/*         console.log(totalUnspentOutputs);
-        console.log(spentOutputs); */
+        if (x ===3) {
+          console.log(`spentOutputs`)
+          console.log(JSON.stringify(spentOutputs))
+          console.log(`totalFeeOutputs`)
+          console.log(totalFeeOutputs)
+        }
+
         x++;
       }
 
