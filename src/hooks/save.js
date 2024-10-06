@@ -34,7 +34,7 @@ export const useAssembler = () => {
         }
       });
 
-      while (x <= 4) {
+      while (x <= 100) {
         console.log(`xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`)
         console.log(x)
         
@@ -42,12 +42,11 @@ export const useAssembler = () => {
         
         let spentOutputsList = [];
 
-        if (x ===3) {
+        if (x >= 3) {
           console.log(`spentOutputsSTART`)
           console.log(JSON.stringify(spentOutputs))
         }
 
-        
         
         // Глубина сат ренжа
         let level = x;
@@ -126,7 +125,7 @@ export const useAssembler = () => {
             voutSum += tx.vout[j].value;
 
               // 
-              if (voutSum >= spentOutputs[i].vinSumBeforeTarget) {
+              if (voutSum > spentOutputs[i].vinSumBeforeTarget) {
                 startOffset = Math.abs(voutSum - spentOutputs[i].vinSumBeforeTarget - tx.vout[j].value);
                 spentOutputs[i] = {
                 ...spentOutputs[i],
@@ -147,9 +146,22 @@ export const useAssembler = () => {
                 spentOutputsTx = spentOutputsTx.slice(0, i).concat(spentOutputsTx.slice(i + 1));
                 break;
               }
-
-
-
+            } else {
+              if (j === spentOutputsTx[i].vout.length - 1) {
+                // В этом условии все наши целевые саты потрачены в качестве комиссии
+                // Добавляем в массив totalFeeOutputs и удаляем из spentOutputs и spentOutputsTx
+                totalFeeOutputs.push({...spentOutputs[i]});
+                spentOutputs = spentOutputs.slice(0, i).concat(spentOutputs.slice(i + 1));
+                spentOutputsTx = spentOutputsTx.slice(0, i).concat(spentOutputsTx.slice(i + 1));
+              } else {
+                // Если voutSum равен vinSumBeforeTarget, то startVout на единицу больше
+                spentOutputs[i] = {
+                ...spentOutputs[i],
+                startOffset: 0,
+                startVout: j + 1
+              }
+              }
+              break;
             }
           }
         }
@@ -179,35 +191,29 @@ export const useAssembler = () => {
               if (j !== spentOutputsTx[i].vout.length - 1) {
                 continue;
               } else {
-                // Last output voutSum меньше целевого значения + оффсет
-                if (voutSum >= spentOutputs[i].vinTargetValue - spentOutputs[i].endOffset) {
-                  // потрачены не целевые саты. Посчитать сколько осталось оффсета
-                  // Возможно ошибка так как офсета может не быть
-                  endOffset = Math.abs(voutSum - spentOutputs[i].vinTargetValue - spentOutputs[i].startOffset);
+                // Last output voutSum меньше целевого значения + start оффсет
+                // Целевые саты будут потрачены полностью или частично в качестве комиссии
+                if (voutSum > spentOutputs[i].startOffset) {
+
+                  let newValue = voutSum - spentOutputs[i].startOffset;
+                  // Целевые саты потрачены частично в качестве комиссии
                   spentOutputs[i] = {
                     ...spentOutputs[i],
-                    endOffset: endOffset,
+                    endOffset: 0,
                     endVout: j,
+                    value: newValue
                   }
+                  totalFeeOutputs.push({...spentOutputs[i]});
                   break;
 
-                } else {
-                  // целевые саты потрачены в качестве комиссии
-                  let vinTargetValue = spentOutputs[i].vinTargetValue - (voutSum - spentOutputs[i].startOffset);
-                  let value = voutSum - spentOutputs[i].vinTargetValue - spentOutputs[i].startOffset;
-                  endOffset = 0;
-                  spentOutputs[i] = {
-                    ...spentOutputs[i],
-                    endOffset: endOffset,
-                    endVout: j,
-                    value: value
-                  }
+                  
+                } else if (voutSum <= spentOutputs[i].startOffset) {
+                  // Целевые саты потрачены полностью в качестве комиссии
                   totalFeeOutputs.push({...spentOutputs[i]});
                   spentOutputs = spentOutputs.slice(0, i).concat(spentOutputs.slice(i + 1));
                   spentOutputsTx = spentOutputsTx.slice(0, i).concat(spentOutputsTx.slice(i + 1));
                   break;
                 }
-                // Часть выхода потрачена в качестве комисси
                 
               }
             } 
@@ -238,7 +244,7 @@ export const useAssembler = () => {
         const multicallOutResult = await fetchOutspendsMulticall(multicallOutParams);
 
 
-        if (x ===3) {
+        if (x >= 3) {
           console.log(`multicallOutResult`)
           console.log(JSON.stringify(multicallOutResult))
         }
@@ -257,6 +263,7 @@ export const useAssembler = () => {
           } else if (output && !output.spent) {
             spentOutputs = spentOutputs.slice(0, i).concat(spentOutputs.slice(i + 1));
             totalUnspentOutputs.push({ ...spentOutputsList[i], index: i, level: level });
+            spentOutputsList = spentOutputsList.slice(0, i).concat(spentOutputsList.slice(i + 1));
           }
         }
 
@@ -265,11 +272,13 @@ export const useAssembler = () => {
         spentOutputsTx.length = 0;
         spentOutputsList.length = 0;
 
-        if (x ===3) {
+        if (x >= 3) {
           console.log(`spentOutputs`)
           console.log(JSON.stringify(spentOutputs))
           console.log(`totalFeeOutputs`)
           console.log(totalFeeOutputs)
+          console.log(`totalUnspentOutputs`)
+          console.log(totalUnspentOutputs)
         }
 
         x++;
